@@ -1,6 +1,6 @@
 name: Bunny Userbot
 on:
-  workflow_dispatch: # Allows you to start it manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
   run-bot:
@@ -8,14 +8,6 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-      
-      # Frees up ~20GB of space for larger video handling
-      - name: Maximize Runner Space
-        uses: easimon/maximize-build-space@master
-        with:
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -23,8 +15,10 @@ jobs:
           python-version: '3.9'
 
       - name: Install Dependencies
-        run: pip install -r requirements.txt
-          
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
       - name: Run Bot
         env:
           API_ID: ${{ secrets.API_ID }}
