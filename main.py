@@ -5,6 +5,7 @@ import patoolib
 import aiohttp
 import mimetypes
 from pyrogram import Client, filters
+from pyrogram.errors import FloodWait
 
 # --- Config (GitHub Secrets) ---
 API_ID = int(os.getenv("API_ID"))
@@ -16,8 +17,10 @@ BUNNY_STREAM_KEY = os.getenv("BUNNY_STREAM_KEY")
 BUNNY_LIBRARY_ID = os.getenv("BUNNY_LIBRARY_ID")
 
 mimetypes.init()
+
+# Define global variables to be initialized inside the loop
 app = Client("bunny_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
-queue = asyncio.Queue()
+queue = None 
 
 # --- Helper Functions ---
 
@@ -88,24 +91,46 @@ async def worker():
             file_path = await message.download()
             await recursive_process(file_path, status)
             await status.edit_text("✅ All contents processed and uploaded!")
+        except FloodWait as e:
+            print(f"Flood wait: sleeping for {e.value}s")
+            await asyncio.sleep(e.value)
         except Exception as e:
-            await message.reply_text(f"❌ Critical Error: {str(e)}")
+            try:
+                await message.reply_text(f"❌ Critical Error: {str(e)}")
+            except Exception as reply_err:
+                print(f"Failed to send error message: {reply_err}")
         finally:
             if 'file_path' in locals() and os.path.exists(file_path):
-                os.remove(file_path)
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
             queue.task_done()
 
+# Target ONLY messages sent by you that contain documents
 @app.on_message(filters.me & filters.document)
 async def producer(client, message):
+    global queue
     await queue.put(message)
-    await message.edit_text("📝 Added to Queue. Moving to server-side processing...")
+    try:
+        await message.edit_text("📝 Added to Queue. Moving to server-side processing...")
+    except Exception as e:
+         print(f"Error updating message: {e}")
 
 # --- Boot ---
 
 async def main():
+    global queue
+    # Initialize the queue inside the active event loop
+    queue = asyncio.Queue()
+    
     await app.start()
     print("Userbot Online.")
-    asyncio.create_task(worker())
+    
+    # Start the worker task
+    worker_task = asyncio.create_task(worker())
+    
+    # Keep the main loop running
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
