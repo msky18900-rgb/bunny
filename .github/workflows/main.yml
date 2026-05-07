@@ -1,18 +1,28 @@
-name: Bunny Transfer Bot
+name: Bunny Cloud Transfer
 on:
   workflow_dispatch:
+
 jobs:
-  run-bot:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-      - name: Install dependencies
+
+      - name: Install System Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install unrar p7zip-full -y
+
+      - name: Install Libraries
         run: pip install -r requirements.txt
-      - name: Start Userbot
+
+      - name: Run Bot
         env:
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
@@ -21,4 +31,4 @@ jobs:
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_STREAM_KEY: ${{ secrets.BUNNY_STREAM_KEY }}
           BUNNY_LIBRARY_ID: ${{ secrets.BUNNY_LIBRARY_ID }}
-        run: python main.py
+        run: python -u main.py
