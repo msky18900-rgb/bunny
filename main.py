@@ -47,14 +47,14 @@ async def upload_to_stream(local_path, name, status):
 async def recursive_process(path, status):
     file_name = os.path.basename(path)
     
-    # 1. Handle Archives
+    # 1. Handle Archives (ZIP, RAR, 7Z)
     if path.lower().endswith(('.zip', '.rar', '.7z', '.tar', '.gz')):
         ex_dir = f"{path}_ex"
         os.makedirs(ex_dir, exist_ok=True)
         await status.edit_text(f"📦 Extracting: `{file_name}`")
         try:
             patoolib.extract_archive(path, outdir=ex_dir, verbosity=-1)
-            # ERASE ARCHIVE IMMEDIATELY to free space
+            # ERASE ARCHIVE IMMEDIATELY after extraction
             if os.path.exists(path): os.remove(path)
             
             for root, _, files in os.walk(ex_dir):
@@ -68,23 +68,22 @@ async def recursive_process(path, status):
     elif mimetypes.guess_type(path)[0] and 'video' in mimetypes.guess_type(path)[0]:
         await status.edit_text(f"🎬 Streaming: `{file_name}`")
         await upload_to_stream(path, file_name, status)
-        if os.path.exists(path): os.remove(path) # ERASE AFTER UPLOAD
+        if os.path.exists(path): os.remove(path)
 
     # 3. Handle Other Files
     else:
-        await status_msg_text = await status.edit_text(f"📁 Storing: `{file_name}`")
+        await status.edit_text(f"📁 Storing: `{file_name}`")
         await upload_to_storage(path, file_name, status)
-        if os.path.exists(path): os.remove(path) # ERASE AFTER UPLOAD
+        if os.path.exists(path): os.remove(path)
 
 async def worker():
     while True:
         msg = await queue.get()
-        # Clean downloads folder at start of every new task
-        if os.path.exists("downloads"): shutil.rmtree("downloads", ignore_errors=True)
+        # Clean local workspace
+        shutil.rmtree("downloads", ignore_errors=True)
         
         status = await msg.reply_text("🛰️ **Task Received**")
         try:
-            # We use a broad download path to ensure we can track it
             path = await msg.download(progress=progress, progress_args=(status, "Downloading from TG"))
             await recursive_process(path, status)
             await status.edit_text("🎯 **Task Complete. Disk Cleared.**")
@@ -93,7 +92,6 @@ async def worker():
         finally:
             queue.task_done()
 
-# BROAD FILTER: Catch everything you send or forward to yourself
 @app.on_message(filters.me & (filters.document | filters.video))
 async def producer(_, msg):
     await queue.put(msg)
@@ -104,7 +102,6 @@ async def main():
     queue = asyncio.Queue()
     await app.start()
     
-    # FORCE SYNC
     me = await app.get_me()
     await app.send_message("me", f"⚡ **Bot Online for {me.first_name}**\nForward files here.")
     
