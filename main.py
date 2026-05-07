@@ -5,7 +5,7 @@ import patoolib
 import aiohttp
 import mimetypes
 from pyrogram import Client, filters
-from pyrogram.errors import FloodWait
+from pyrogram.handlers import MessageHandler
 
 # --- Config (GitHub Secrets) ---
 API_ID = int(os.getenv("API_ID"))
@@ -18,11 +18,11 @@ BUNNY_LIBRARY_ID = os.getenv("BUNNY_LIBRARY_ID")
 
 mimetypes.init()
 
-# Define global variables to be initialized inside the loop
+# Global setup
 app = Client("bunny_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
-queue = None 
+queue = None
 
-# --- Helper Functions ---
+# --- Helper Functions (Storage & Stream) ---
 
 async def upload_to_storage(local_path, bunny_path):
     url = f"https://storage.bunnycdn.com/{BUNNY_STORAGE_ZONE}/{bunny_path}"
@@ -38,7 +38,6 @@ async def upload_to_stream(local_path, video_name):
         async with session.post(create_url, headers=headers, json={'title': video_name}) as r:
             res = await r.json()
             video_id = res['guid']
-        
         upload_url = f"https://video.bunnycdn.com/library/{BUNNY_LIBRARY_ID}/videos/{video_id}"
         with open(local_path, 'rb') as f:
             await session.put(upload_url, headers=headers, data=f)
@@ -54,84 +53,72 @@ async def recursive_process(path, status_msg):
     if is_archive(path):
         extract_dir = f"{path}_extracted"
         os.makedirs(extract_dir, exist_ok=True)
-        await status_msg.edit_text(f"📦 Extracting Archive: {os.path.basename(path)}")
-        
+        await status_msg.edit_text(f"📦 Extracting: {os.path.basename(path)}")
         try:
             patoolib.extract_archive(path, outdir=extract_dir, verbosity=-1)
             if os.path.exists(path): os.remove(path)
-
             for root, _, files in os.walk(extract_dir):
                 for f in files:
-                    file_full_path = os.path.join(root, f)
-                    await recursive_process(file_full_path, status_msg)
+                    await recursive_process(os.path.join(root, f), status_msg)
         except Exception as e:
             print(f"Extraction error: {e}")
-        
-        if os.path.exists(extract_dir):
-            shutil.rmtree(extract_dir)
-
+        if os.path.exists(extract_dir): shutil.rmtree(extract_dir)
     elif is_video(path):
-        await status_msg.edit_text(f"🎬 [STREAM] Uploading: {os.path.basename(path)}")
+        await status_msg.edit_text(f"🎬 Streaming: {os.path.basename(path)}")
         await upload_to_stream(path, os.path.basename(path))
         if os.path.exists(path): os.remove(path)
-    
     else:
-        await status_msg.edit_text(f"📁 [STORAGE] Uploading: {os.path.basename(path)}")
-        bunny_path = os.path.basename(path)
-        await upload_to_storage(path, bunny_path)
+        await status_msg.edit_text(f"📁 Storing: {os.path.basename(path)}")
+        await upload_to_storage(path, os.path.basename(path))
         if os.path.exists(path): os.remove(path)
 
-# --- Queue Worker ---
+# --- Worker & Handler ---
 
 async def worker():
     while True:
         message = await queue.get()
         try:
-            status = await message.edit_text("⏳ Download starting...")
+            status = await message.reply_text("⏳ Processing starting...")
             file_path = await message.download()
             await recursive_process(file_path, status)
-            await status.edit_text("✅ All contents processed and uploaded!")
-        except FloodWait as e:
-            print(f"Flood wait: sleeping for {e.value}s")
-            await asyncio.sleep(e.value)
+            await status.edit_text("✅ All done!")
         except Exception as e:
-            try:
-                await message.reply_text(f"❌ Critical Error: {str(e)}")
-            except Exception as reply_err:
-                print(f"Failed to send error message: {reply_err}")
+            print(f"Worker error: {e}")
         finally:
-            if 'file_path' in locals() and os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except Exception:
-                    pass
             queue.task_done()
 
-# Target ONLY messages sent by you that contain documents
-@app.on_message(filters.me & filters.document)
+@app.on_message(filters.chat("me") & filters.document)
 async def producer(client, message):
-    global queue
     await queue.put(message)
-    try:
-        await message.edit_text("📝 Added to Queue. Moving to server-side processing...")
-    except Exception as e:
-         print(f"Error updating message: {e}")
 
-# --- Boot ---
+# --- Main Boot ---
 
 async def main():
     global queue
-    # Initialize the queue inside the active event loop
     queue = asyncio.Queue()
     
+    # Start the client
     await app.start()
-    print("Userbot Online.")
     
-    # Start the worker task
-    worker_task = asyncio.create_task(worker())
+    # CRITICAL: Force the session to recognize 'me' and Saved Messages
+    try:
+        me = await app.get_me()
+        print(f"Logged in as: {me.first_name}")
+        await app.send_message("me", "🚀 Userbot active and watching Saved Messages.")
+    except Exception as e:
+        print(f"Initial sync error: {e}")
+
+    # Start worker
+    asyncio.create_task(worker())
+    print("Bot is fully initialized. Send a file to Saved Messages.")
     
-    # Keep the main loop running
+    # Keep running
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Suppress the update errors that don't affect our specific chat
+    import logging
+    logging.getLogger("pyrogram").setLevel(logging.ERROR)
+    
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
